@@ -69,10 +69,9 @@ export function startTranslationWorker(redisUrl: string, deps: WorkerDeps): Work
         return translateWithCache({ text, targetLanguage, provider, redis })
       }
       if (job.name === 'bulk') {
-        const { texts, targetLanguage, userId } = job.data as {
+        const { texts, targetLanguage } = job.data as {
           texts: string[]
           targetLanguage: SupportedLanguage
-          userId?: string | null
         }
         return translateBulkWithCache({
           texts,
@@ -80,7 +79,6 @@ export function startTranslationWorker(redisUrl: string, deps: WorkerDeps): Work
           provider,
           redis,
           lru: getTranslationLru(),
-          userId: userId ?? null,
         })
       }
       throw new Error(`Unknown job name: ${job.name}`)
@@ -138,16 +136,11 @@ export async function runTranslateBulk(params: {
   provider: TranslationProvider
   redis: Redis | null
   lru: LruForBulk | null
-  userId?: string | null
 }): Promise<BulkItemResult[]> {
   if (!producerReady()) {
     return translateBulkWithCache(params)
   }
-  const job = await queue!.add(
-    'bulk',
-    { texts: params.texts, targetLanguage: params.targetLanguage, userId: params.userId ?? null },
-    defaultJobOpts
-  )
+  const job = await queue!.add('bulk', { texts: params.texts, targetLanguage: params.targetLanguage }, defaultJobOpts)
   try {
     return await job.waitUntilFinished(queueEvents!, bulkJobTimeoutMs())
   } catch {

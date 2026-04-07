@@ -20,7 +20,7 @@ It is optimized for:
 
 This workspace is a small full-stack app with:
 
-- **Frontend**: React + Vite (`blys-itl-react/`)
+- **Frontend**: React + Vite (`frontend/`)
 - **Backend API**: Express + TypeScript (`backend/`)
 - **Database**: Postgres (Prisma)
 - **Cache / coordination**: Redis (cache + Pub/Sub + BullMQ)
@@ -34,7 +34,7 @@ The core product behavior is: **a user has a preferred language**; whenever a us
 
 ```mermaid
 flowchart LR
-  FE[React + Vite\nblys-itl-react] -->|HTTP JSON| API[Express API\nbackend/src/bin/api.ts]
+  FE[React + Vite\nfrontend] -->|HTTP JSON| API[Express API\nbackend/src/bin/api.ts]
 
   API -->|Prisma| PG[(Postgres)]
   API -->|ioredis GET/SET + Pub/Sub + BullMQ| R[(Redis)]
@@ -78,13 +78,13 @@ flowchart LR
     - Client helpers: `backend/src/translate/global-batcher.ts`
     - Batcher loop: `backend/src/translate/global-batcher-worker.ts`
 
-### Frontend (`blys-itl-react/`)
+### Frontend (`frontend/`)
 
-- App entry: `blys-itl-react/src/main.jsx`, `blys-itl-react/src/App.jsx`
-- Main UI: `blys-itl-react/src/components/Navbar.jsx`, `blys-itl-react/src/pages/MainPage.jsx`
-- API client: `blys-itl-react/src/api/http.js`
-- Query hooks: `blys-itl-react/src/api/users.js`, `blys-itl-react/src/api/languages.js`
-- i18n resources: `blys-itl-react/src/i18n.js`
+- App entry: `frontend/src/main.jsx`, `frontend/src/App.jsx`
+- Main UI: `frontend/src/components/Navbar.jsx`, `frontend/src/pages/MainPage.jsx`
+- API client: `frontend/src/api/http.js`
+- Query hooks: `frontend/src/api/users.js`, `frontend/src/api/languages.js`
+- i18n resources: `frontend/src/i18n.js`
 
 ---
 
@@ -145,7 +145,7 @@ Implemented in `backend/src/bin/api.ts` and module routers:
 
 ### Navbar
 
-`blys-itl-react/src/components/Navbar.jsx`:
+`frontend/src/components/Navbar.jsx`:
 
 - Loads **users** (`GET /users`) and **languages** (`GET /languages`).
 - Stores the selected userId in `localStorage` key **`user`**.
@@ -155,7 +155,7 @@ Implemented in `backend/src/bin/api.ts` and module routers:
 
 ### Main page form
 
-`blys-itl-react/src/pages/MainPage.jsx`:
+`frontend/src/pages/MainPage.jsx`:
 
 - Reads `userId` from local storage and fetches `GET /users/:userId`.
 - Allows editing `address` + `notes`.
@@ -190,7 +190,7 @@ Translation providers are expensive at scale. Re-translating identical text is w
 
 ### 3) Split static vs dynamic translations
 
-- **Static UI text**: frontend i18n (`blys-itl-react/src/i18n.js`)
+- **Static UI text**: frontend i18n (`frontend/src/i18n.js`)
 - **Dynamic user input**: translation pipeline (cache + DB + provider)
 
 ---

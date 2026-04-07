@@ -67,9 +67,8 @@ export async function translateWithCache(params: {
   targetLanguage: SupportedLanguage
   provider: TranslationProvider
   redis: Redis | null
-  userId?: string | null
 }) {
-  const { text, targetLanguage, provider, redis, userId } = params
+  const { text, targetLanguage, provider, redis } = params
   const normalizedText = text.trim()
 
   if (isNonTranslatable(normalizedText)) {
@@ -158,19 +157,6 @@ export async function translateWithCache(params: {
         hash,
       },
     })
-
-    if (userId) {
-      await prisma.translationRef.create({
-        data: {
-          userId,
-          hash,
-          sourceLanguageCode,
-          targetLanguageCode: targetLanguage,
-        },
-      }).catch(() => {
-        // ignore duplicates/races
-      })
-    }
   }
 
   lru?.set(key, translatedText)

@@ -20,10 +20,6 @@ function hashV2ForStoredText(sourceText: string, sourceLanguageCode: SupportedLa
   return sha256(`${t}|${sourceLanguageCode}|${targetLanguageCode}`)
 }
 
-function cleanupEnabled(): boolean {
-  return process.env.TRANSLATION_CLEANUP_ON_USER_UPDATE === 'true'
-}
-
 const upsertSchema = z.object({
   address: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -71,7 +67,6 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
       provider: params.provider,
       redis: params.redis,
       lru: getTranslationLru(),
-      userId: (user as any).userId ?? null,
     })
 
     const translatedByField = new Map<string, string>()
@@ -191,7 +186,6 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
         provider: params.provider,
         redis: params.redis,
         lru: getTranslationLru(),
-        userId,
       })
       for (const r of results) {
         const original = toNormalizeToPreferred[r.index]
@@ -215,9 +209,9 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
       include: { language: true },
     })
 
-    // Optional cleanup: remove translation rows (and Redis keys) related to the previous stored text.
-    // Warning: translations may be shared across users if texts match exactly; keep behind an env flag.
-    if (cleanupEnabled() && existing) {
+    // Cleanup: remove translation rows (and Redis keys) related to the previous stored text.
+    // This is a demo app; we delete aggressively when user text changes.
+    if (existing) {
       const cleanupFields: Array<{ oldText: string; newText: string | null }> = []
       if (typeof oldAddress === 'string' && oldAddress.trim().length > 0 && oldAddress !== user.address) {
         cleanupFields.push({ oldText: oldAddress, newText: user.address ?? null })
@@ -230,29 +224,13 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
         const targets = SUPPORTED_LANGUAGES.filter((t) => t !== preferredLanguage)
         const hashes = targets.map((t) => hashV2ForStoredText(f.oldText, preferredLanguage, t))
 
-        // First remove this user's references.
-        await prisma.translationRef.deleteMany({
+        await prisma.translation.deleteMany({
           where: {
-            userId,
             hash: { in: hashes },
             sourceLanguageCode: preferredLanguage,
             targetLanguageCode: { in: targets },
           },
         })
-
-        // Then delete translation rows only if no users reference them.
-        for (let i = 0; i < targets.length; i++) {
-          const t = targets[i]!
-          const h = hashes[i]!
-          const refCount = await prisma.translationRef.count({
-            where: { hash: h, sourceLanguageCode: preferredLanguage, targetLanguageCode: t },
-          })
-          if (refCount === 0) {
-            await prisma.translation.deleteMany({
-              where: { hash: h, sourceLanguageCode: preferredLanguage, targetLanguageCode: t },
-            })
-          }
-        }
 
         if (params.redis) {
           for (let i = 0; i < targets.length; i++) {
