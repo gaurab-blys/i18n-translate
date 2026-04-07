@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  userId     String @id
+  address    String?
+  notes      String?
+  languageId Int?
+  language   Language? @relation(fields: [languageId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  translationRefs TranslationRef[]
+
+  @@map("users")
+}
+
+model Language {
+  id    Int    @id @default(autoincrement())
+  code  String @unique @db.Char(2)
+  name  String
+  users User[]
+
+  @@map("languages")
+}
+
+model Translation {
+  id             BigInt   @id @default(autoincrement())
+  sourceText     String   @db.Text
+  sourceLanguageCode String @db.Char(2)
+  targetLanguageCode String @db.Char(2)
+  translatedText String   @db.Text
+  hash           String   @db.Char(64)
+  createdAt      DateTime @default(now())
+
+  @@unique([hash, sourceLanguageCode, targetLanguageCode])
+  @@index([hash, sourceLanguageCode, targetLanguageCode])
+  @@map("translations")
+}
+
+model TranslationRef {
+  id                 BigInt   @id @default(autoincrement())
+  userId             String
+  hash               String   @db.Char(64)
+  sourceLanguageCode String   @db.Char(2)
+  targetLanguageCode String   @db.Char(2)
+  createdAt          DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, hash, sourceLanguageCode, targetLanguageCode])
+  @@index([hash, sourceLanguageCode, targetLanguageCode])
+  @@map("translation_refs")
+}
+
