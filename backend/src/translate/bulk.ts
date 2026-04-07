@@ -65,8 +65,9 @@ export async function translateBulkWithCache(params: {
   provider: TranslationProvider
   redis: Redis | null
   lru: LruLike | null
+  userId?: string | null
 }): Promise<BulkItemResult[]> {
-  const { texts, targetLanguage, provider, redis, lru } = params
+  const { texts, targetLanguage, provider, redis, lru, userId } = params
   const persistDb = translationDbPersistEnabled()
   const n = texts.length
 
@@ -226,6 +227,24 @@ export async function translateBulkWithCache(params: {
         await redisSetAndPublish(redis, r.key, t)
       }
     }
+  }
+
+  if (persistDb && userId) {
+    // Track per-user references so we can safely delete unreferenced translation rows later.
+    await prisma.translationRef.createMany({
+      data: rows
+        .filter((r) => r.hash && r.key) // defensive
+        .map((r) => {
+          const src = srcByIndex.get(r.index) ?? targetLanguage
+          return {
+            userId,
+            hash: r.hash,
+            sourceLanguageCode: src,
+            targetLanguageCode: targetLanguage,
+          }
+        }),
+      skipDuplicates: true,
+    })
   }
 
   return rows.map((r) => ({

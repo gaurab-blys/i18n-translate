@@ -71,6 +71,7 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
       provider: params.provider,
       redis: params.redis,
       lru: getTranslationLru(),
+      userId: (user as any).userId ?? null,
     })
 
     const translatedByField = new Map<string, string>()
@@ -190,6 +191,7 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
         provider: params.provider,
         redis: params.redis,
         lru: getTranslationLru(),
+        userId,
       })
       for (const r of results) {
         const original = toNormalizeToPreferred[r.index]
@@ -228,13 +230,29 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
         const targets = SUPPORTED_LANGUAGES.filter((t) => t !== preferredLanguage)
         const hashes = targets.map((t) => hashV2ForStoredText(f.oldText, preferredLanguage, t))
 
-        await prisma.translation.deleteMany({
+        // First remove this user's references.
+        await prisma.translationRef.deleteMany({
           where: {
+            userId,
             hash: { in: hashes },
             sourceLanguageCode: preferredLanguage,
             targetLanguageCode: { in: targets },
           },
         })
+
+        // Then delete translation rows only if no users reference them.
+        for (let i = 0; i < targets.length; i++) {
+          const t = targets[i]!
+          const h = hashes[i]!
+          const refCount = await prisma.translationRef.count({
+            where: { hash: h, sourceLanguageCode: preferredLanguage, targetLanguageCode: t },
+          })
+          if (refCount === 0) {
+            await prisma.translation.deleteMany({
+              where: { hash: h, sourceLanguageCode: preferredLanguage, targetLanguageCode: t },
+            })
+          }
+        }
 
         if (params.redis) {
           for (let i = 0; i < targets.length; i++) {
