@@ -37,7 +37,6 @@ services:
       # Default to stub so local Docker works without Google credentials.
       # Override by exporting TRANSLATION_PROVIDER=google before `docker compose up`.
       TRANSLATION_PROVIDER: google
-      # TRANSLATION_PROVIDER: ${TRANSLATION_PROVIDER:-stub}
       GOOGLE_APPLICATION_CREDENTIALS: /app/service-account.json
     ports:
       - "8080:8080"

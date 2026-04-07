@@ -447,3 +447,26 @@ Backend `docker-compose.yml` runs:
 - `redis`
 - `app` (Express)
 
+### Run backend with Docker
+From `backend/`:
+
+```bash
+docker compose up -d --build
+```
+
+API will be on `http://localhost:8080`.
+
+#### Translation provider in Docker
+- **Default**: stub (no external credentials required)
+- **Enable Google Translate** (requires valid service account JSON mounted at `backend/service-account.json`):
+
+```bash
+TRANSLATION_PROVIDER=google docker compose up -d --build
+```
+
+Important: **do not commit** `backend/service-account.json`. If it was exposed, revoke/rotate the key in GCP.
+
+### Health endpoints
+- `GET /health`: liveness (process up)
+- `GET /ready`: readiness (DB reachable)
+
