@@ -7,17 +7,10 @@ import { getTranslationLru, sha256 } from '../translate/translate.service'
 import { prisma } from '../../infra/prisma/client'
 import { detectSourceLanguage, isNonTranslatable } from '../../translate/detect'
 import { publishTranslationLruInvalidation } from '../../translate/redis-invalidate-sub'
+import { normalizeForTranslationKey } from '../../translate/normalize'
 
-const SUPPORTED_LANGUAGES: SupportedLanguage[] = ['en', 'fr', 'gr', 'cn']
-
-function translationKey(sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage, hash: string) {
-  return `translation:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
-}
-
-function hashV2ForStoredText(sourceText: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage) {
-  // Keep consistent with backend/src/translate/service.ts hashing (trim before hashing).
-  const t = sourceText.trim()
-  return sha256(`${t}|${sourceLanguageCode}|${targetLanguageCode}`)
+function translationKeyForUser(userId: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage, hash: string) {
+  return `translation:${userId}:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
 }
 
 const upsertSchema = z.object({
@@ -67,6 +60,7 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
       provider: params.provider,
       redis: params.redis,
       lru: getTranslationLru(),
+      userId: (user as any).userId ?? null,
     })
 
     const translatedByField = new Map<string, string>()
@@ -186,6 +180,7 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
         provider: params.provider,
         redis: params.redis,
         lru: getTranslationLru(),
+        userId,
       })
       for (const r of results) {
         const original = toNormalizeToPreferred[r.index]
@@ -221,25 +216,34 @@ export function createUsersRouter(params: { redis: Redis | null; provider: Trans
       }
 
       for (const f of cleanupFields) {
-        const targets = SUPPORTED_LANGUAGES.filter((t) => t !== preferredLanguage)
-        const hashes = targets.map((t) => hashV2ForStoredText(f.oldText, preferredLanguage, t))
-
-        await prisma.translation.deleteMany({
-          where: {
-            hash: { in: hashes },
-            sourceLanguageCode: preferredLanguage,
-            targetLanguageCode: { in: targets },
-          },
-        })
+        const oldKeyText = normalizeForTranslationKey(f.oldText)
+        const rows = (await prisma.$queryRaw<
+          Array<{ id: bigint; hash: string; sourceLanguageCode: string; targetLanguageCode: string }>
+        >`SELECT id, hash, "sourceLanguageCode", "targetLanguageCode"
+          FROM translations
+          WHERE "userId" = ${userId} AND "sourceText" = ${oldKeyText}`) as Array<{
+          id: bigint
+          hash: string
+          sourceLanguageCode: string
+          targetLanguageCode: string
+        }>
 
         if (params.redis) {
-          for (let i = 0; i < targets.length; i++) {
-            const t = targets[i]!
-            const h = hashes[i]!
-            const key = translationKey(preferredLanguage, t, h)
+          for (const r of rows) {
+            const key = translationKeyForUser(
+              userId,
+              r.sourceLanguageCode as SupportedLanguage,
+              r.targetLanguageCode as SupportedLanguage,
+              r.hash
+            )
             await params.redis.del(key)
             await publishTranslationLruInvalidation(params.redis, key)
           }
+        }
+
+        const ids = rows.map((r) => r.id)
+        if (ids.length > 0) {
+          await prisma.translation.deleteMany({ where: { id: { in: ids as any } } })
         }
       }
     }

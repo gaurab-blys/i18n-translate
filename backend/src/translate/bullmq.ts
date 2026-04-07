@@ -62,16 +62,18 @@ export function startTranslationWorker(redisUrl: string, deps: WorkerDeps): Work
     async (job) => {
       const { provider, redis } = workerDeps!
       if (job.name === 'single') {
-        const { text, targetLanguage } = job.data as {
+        const { text, targetLanguage, userId } = job.data as {
           text: string
           targetLanguage: SupportedLanguage
+          userId?: string | null
         }
-        return translateWithCache({ text, targetLanguage, provider, redis })
+        return translateWithCache({ text, targetLanguage, provider, redis, userId: userId ?? null })
       }
       if (job.name === 'bulk') {
-        const { texts, targetLanguage } = job.data as {
+        const { texts, targetLanguage, userId } = job.data as {
           texts: string[]
           targetLanguage: SupportedLanguage
+          userId?: string | null
         }
         return translateBulkWithCache({
           texts,
@@ -79,6 +81,7 @@ export function startTranslationWorker(redisUrl: string, deps: WorkerDeps): Work
           provider,
           redis,
           lru: getTranslationLru(),
+          userId: userId ?? null,
         })
       }
       throw new Error(`Unknown job name: ${job.name}`)
@@ -117,11 +120,16 @@ export async function runTranslateSingle(params: {
   targetLanguage: SupportedLanguage
   provider: TranslationProvider
   redis: Redis | null
+  userId?: string | null
 }): Promise<Awaited<ReturnType<typeof translateWithCache>>> {
   if (!producerReady()) {
     return translateWithCache(params)
   }
-  const job = await queue!.add('single', { text: params.text, targetLanguage: params.targetLanguage }, defaultJobOpts)
+  const job = await queue!.add(
+    'single',
+    { text: params.text, targetLanguage: params.targetLanguage, userId: params.userId ?? null },
+    defaultJobOpts
+  )
   try {
     return await job.waitUntilFinished(queueEvents!, singleJobTimeoutMs())
   } catch {
@@ -136,11 +144,16 @@ export async function runTranslateBulk(params: {
   provider: TranslationProvider
   redis: Redis | null
   lru: LruForBulk | null
+  userId?: string | null
 }): Promise<BulkItemResult[]> {
   if (!producerReady()) {
     return translateBulkWithCache(params)
   }
-  const job = await queue!.add('bulk', { texts: params.texts, targetLanguage: params.targetLanguage }, defaultJobOpts)
+  const job = await queue!.add(
+    'bulk',
+    { texts: params.texts, targetLanguage: params.targetLanguage, userId: params.userId ?? null },
+    defaultJobOpts
+  )
   try {
     return await job.waitUntilFinished(queueEvents!, bulkJobTimeoutMs())
   } catch {

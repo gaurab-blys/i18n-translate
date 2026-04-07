@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLanguages } from '../api/languages'
 import { useUpdateUserLanguage, useUser, useUsers } from '../api/users'
+import Spinner from './Spinner.jsx'
 
 export default function Navbar() {
   const { t, i18n } = useTranslation()
@@ -84,6 +85,9 @@ export default function Navbar() {
                 )
               })}
             </select>
+            <span className="loading-inline" aria-hidden="true">
+              {languagesQuery.isLoading || updateLanguage.isPending ? <Spinner size={14} label="Loading languages" /> : null}
+            </span>
           </div>
 
           <div className="nav__controls">
@@ -103,6 +107,9 @@ export default function Navbar() {
                 </option>
               ))}
             </select>
+            <span className="loading-inline" aria-hidden="true">
+              {usersQuery.isLoading || userQuery.isLoading ? <Spinner size={14} label="Loading users" /> : null}
+            </span>
           </div>
         </div>
       </div>

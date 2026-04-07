@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useUpsertUser, useUser } from '../api/users'
+import Spinner from '../components/Spinner.jsx'
 
 export default function MainPage() {
   const { t } = useTranslation()
@@ -88,6 +89,12 @@ export default function MainPage() {
       <div className="card">
         <h1 className="card__title">{t('form.title')}</h1>
 
+        {userId && (userQuery.isLoading || userQuery.isFetching) ? (
+          <div className="loading-screen" aria-busy="true">
+            <Spinner size={28} label="Loading user" />
+          </div>
+        ) : null}
+
         {localized ? (
           <div className="field" style={{ marginBottom: 12 }}>
             <label className="field__label" htmlFor="showOriginalToggle">
@@ -157,7 +164,10 @@ export default function MainPage() {
             onClick={onSave}
             disabled={!userId || upsertUser.isPending}
           >
-            {upsertUser.isPending ? 'Saving…' : 'Save'}
+            <span className="button__content">
+              {upsertUser.isPending ? <Spinner size={16} label="Saving" /> : null}
+              <span>{upsertUser.isPending ? 'Saving…' : 'Save'}</span>
+            </span>
           </button>
           {upsertUser.isError ? (
             <div className="actions__hint" role="alert">

@@ -5,6 +5,7 @@ import { prisma } from '../prisma'
 import type { SupportedLanguage, TranslationProvider } from './provider'
 import { publishTranslationLruInvalidation } from './redis-invalidate-sub'
 import { detectSourceLanguage, isNonTranslatable } from './detect'
+import { normalizeForProvider, normalizeForTranslationKey } from './normalize'
 import {
   batchingWaitTimeoutMs,
   enqueueGlobalBatchRequest,
@@ -26,7 +27,11 @@ function hashV2(input: { sourceText: string; sourceLanguageCode: SupportedLangua
 }
 
 function cacheKeyV2(hash: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage) {
-  return `translation:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
+  return `translation:global:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
+}
+
+function cacheKeyV2ForUser(userId: string, hash: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage) {
+  return `translation:${userId}:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
 }
 
 function translationDbPersistEnabled(): boolean {
@@ -67,28 +72,33 @@ export async function translateWithCache(params: {
   targetLanguage: SupportedLanguage
   provider: TranslationProvider
   redis: Redis | null
+  userId?: string | null
 }) {
-  const { text, targetLanguage, provider, redis } = params
-  const normalizedText = text.trim()
+  const { text, targetLanguage, provider, redis, userId } = params
+  const providerText = normalizeForProvider(text)
+  const keyText = normalizeForTranslationKey(text)
 
-  if (isNonTranslatable(normalizedText)) {
-    const hash = sha256(normalizedText)
-    return { translatedText: normalizedText, hash, fromCache: true as const, source: 'skip' as const }
+  if (isNonTranslatable(providerText)) {
+    const hash = sha256(keyText)
+    return { translatedText: providerText, hash, fromCache: true as const, source: 'skip' as const }
   }
 
-  const detected = detectSourceLanguage(normalizedText)
-  const detectedSource = detected.sourceLanguageCode
+  const detected = detectSourceLanguage(providerText)
+  const detectedSource = detected.reliable ? detected.sourceLanguageCode : null
   const sourceLanguageCode = detectedSource ?? defaultSourceLanguageForKey()
 
   // Only skip when we are confident the source language equals the target.
   // If detection is unknown/null, do not skip (otherwise we'd fail to translate short English strings like "Goood").
   if (detectedSource !== null && sourceLanguageCode === targetLanguage) {
-    const hash = sha256(normalizedText)
-    return { translatedText: normalizedText, hash, fromCache: true as const, source: 'skip' as const }
+    const hash = sha256(keyText)
+    return { translatedText: providerText, hash, fromCache: true as const, source: 'skip' as const }
   }
 
-  const hash = hashV2({ sourceText: normalizedText, sourceLanguageCode, targetLanguageCode: targetLanguage })
-  const key = cacheKeyV2(hash, sourceLanguageCode, targetLanguage)
+  const hash = hashV2({ sourceText: keyText, sourceLanguageCode, targetLanguageCode: targetLanguage })
+  const key =
+    userId && userId.trim().length > 0
+      ? cacheKeyV2ForUser(userId, hash, sourceLanguageCode, targetLanguage)
+      : cacheKeyV2(hash, sourceLanguageCode, targetLanguage)
   const persistDb = translationDbPersistEnabled()
 
   const lru = getMemoryLru()
@@ -110,7 +120,8 @@ export async function translateWithCache(params: {
   if (persistDb) {
     const existing = await prisma.translation.findUnique({
       where: {
-        hash_sourceLanguageCode_targetLanguageCode: {
+        userId_hash_sourceLanguageCode_targetLanguageCode: {
+          userId: userId && userId.trim().length > 0 ? userId : 'global',
           hash,
           sourceLanguageCode,
           targetLanguageCode: targetLanguage,
@@ -137,20 +148,21 @@ export async function translateWithCache(params: {
     redis && globalBatchingEnabled()
       ? await (async () => {
           try {
-            const req = await enqueueGlobalBatchRequest(redis, { text: normalizedText, targetLanguage })
+            const req = await enqueueGlobalBatchRequest(redis, { text: providerText, targetLanguage })
             const v = await waitForGlobalBatchResponse(redis, req.requestId, batchingWaitTimeoutMs())
             if (v !== null) return v
           } catch {
             // ignore and fall back
           }
-          return await provider.translate({ text: normalizedText, targetLanguage })
+          return await provider.translate({ text: providerText, targetLanguage })
         })()
-      : await provider.translate({ text: normalizedText, targetLanguage })
+      : await provider.translate({ text: providerText, targetLanguage })
 
   if (persistDb) {
     await prisma.translation.create({
       data: {
-        sourceText: normalizedText,
+        userId: userId && userId.trim().length > 0 ? userId : 'global',
+        sourceText: keyText,
         sourceLanguageCode,
         targetLanguageCode: targetLanguage,
         translatedText,

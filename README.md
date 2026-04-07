@@ -101,11 +101,14 @@ Defined in `backend/prisma/schema.prisma`:
   - `code` (`en`, `fr`, `gr`, etc.)
   - `name`
 - **`Translation`** (translation memory)
-  - `hash` = `sha256(sourceText + \"|\" + sourceLanguageCode + \"|\" + targetLanguageCode)`
+  - `hash` = `sha256(keyText + \"|\" + effectiveSourceLanguageCode + \"|\" + targetLanguageCode)`
+    - `keyText` is a **normalized** version of `sourceText` (see “Translation keys” below)
+    - `effectiveSourceLanguageCode` falls back to the target language when detection is **not reliable** (to avoid cache fragmentation)
   - `sourceLanguageCode` (detected)
   - `targetLanguageCode` (requested)
   - `translatedText`
-  - Unique constraint: **`(hash, sourceLanguageCode, targetLanguageCode)`**
+  - `userId` (text; default `global`)
+  - Unique constraint: **`(userId, hash, sourceLanguageCode, targetLanguageCode)`**
 
 This design makes translation lookups cheap by keying on `(hash, languageCode)` and avoiding full-text indexes for this demo.
 
@@ -163,6 +166,7 @@ Implemented in `backend/src/bin/api.ts` and module routers:
 - For display, it prefers `user.localized.translatedObject.address/notes` when present.
 - Default display is translated when available; a checkbox toggle allows showing the original.
 - On `blys:userUpdated`, it clears local drafts so the UI reflects server-side response updates.
+- Shows loading spinners on the screen and buttons while queries/mutations are pending.
 
 ---
 
@@ -201,8 +205,18 @@ Translation providers are expensive at scale. Re-translating identical text is w
 
 Both single and bulk share the same deterministic key scheme:
 
-- `hash = sha256(sourceText + \"|\" + sourceLanguageCode + \"|\" + targetLanguageCode)`
-- Redis key: **`translation:${sourceLanguageCode}:${targetLanguageCode}:${hash}`**
+- **Normalization**
+  - `keyText = text.trim().toLowerCase()` (for hashing/cache keys)
+  - `providerText = text.trim()` (case-preserving text sent to providers)
+  - Implementation: `backend/src/translate/normalize.ts`
+- **Language detection reliability**
+  - If detection is **reliable**, use the detected `sourceLanguageCode` in the key.
+  - If detection is **not reliable** (or unknown), use `effectiveSourceLanguageCode = targetLanguageCode` for the key to avoid splitting the cache.
+  - Implementation: `backend/src/translate/detect.ts`
+- `hash = sha256(keyText + \"|\" + effectiveSourceLanguageCode + \"|\" + targetLanguageCode)`
+- Redis key:
+  - **Global**: `translation:global:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
+  - **User-scoped**: `translation:${userId}:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
 
 This supports:
 
@@ -224,7 +238,7 @@ This reduces cost when many languages exist but only a subset is ever requested.
 Dynamic translation does a pre-check before calling the provider:
 
 - **Non-translatable heuristic**: emails/URLs/numbers/punctuation-only/very-short strings are returned unchanged.
-- **Language detection**: detect source language (conservative threshold); if it equals the target language, skip translation.
+- **Language detection**: detect source language with a conservative threshold; **only skip translation** when detection is reliable *and* equals the target language.
 
 Implementation: `backend/src/translate/detect.ts`
 
@@ -241,7 +255,7 @@ sequenceDiagram
   participant PG as Postgres (optional)
   participant TP as Provider
 
-  API->>LRU: get(translation:lang:hash)
+  API->>LRU: get(translation:<scope>:<src>:<tgt>:<hash>)
   alt LRU hit
     API-->>API: return source=memory
   else
@@ -250,7 +264,7 @@ sequenceDiagram
       API->>LRU: set(key, value)
       API-->>API: return source=redis
     else
-      API->>PG: findUnique(hash, languageCode)
+      API->>PG: lookup by (userId, hash, sourceLanguageCode, targetLanguageCode)
       alt DB hit (if TRANSLATION_DB_PERSIST=true)
         API->>R: SET key EX 30d
         API->>R: PUBLISH translation:invalidate key
@@ -465,6 +479,13 @@ TRANSLATION_PROVIDER=google docker compose up -d --build
 ```
 
 Important: **do not commit** `backend/service-account.json`. If it was exposed, revoke/rotate the key in GCP.
+
+---
+
+## Notes on recent schema changes
+
+- Translations are now **user-scoped** via `translations.userId` to prevent cross-user dedupe and to make “delete derived translations on user text update” safe and deterministic.
+- If you previously had a legacy unique constraint on `(hash, sourceLanguageCode, targetLanguageCode)`, apply the latest migrations so only the user-scoped uniqueness remains.
 
 ### Health endpoints
 - `GET /health`: liveness (process up)

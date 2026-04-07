@@ -37,6 +37,7 @@ function fromFranc(code3: string): SupportedLanguage | null {
 export type DetectResult = {
   sourceLanguageCode: SupportedLanguage | null
   confidence: number
+  reliable: boolean
 }
 
 /**
@@ -48,16 +49,16 @@ export function detectSourceLanguage(text: string): DetectResult {
   const t = normalize(text)
   const ranked = francAll(t, { only: FRANC_ONLY, minLength: 10 })
   const top = ranked[0]
-  if (!top || top[0] === 'und') return { sourceLanguageCode: null, confidence: 0 }
+  if (!top || top[0] === 'und') return { sourceLanguageCode: null, confidence: 0, reliable: false }
 
   const topLang = fromFranc(top[0])
   const topScore = top[1] ?? 0
   const secondScore = ranked[1]?.[1] ?? 0
   const gap = topScore - secondScore
 
-  if (!topLang) return { sourceLanguageCode: null, confidence: 0 }
-  if (topScore < 0.7 || gap < 0.2) return { sourceLanguageCode: null, confidence: topScore }
+  if (!topLang) return { sourceLanguageCode: null, confidence: 0, reliable: false }
+  if (topScore < 0.7 || gap < 0.2) return { sourceLanguageCode: null, confidence: topScore, reliable: false }
 
-  return { sourceLanguageCode: topLang, confidence: topScore }
+  return { sourceLanguageCode: topLang, confidence: topScore, reliable: true }
 }
 

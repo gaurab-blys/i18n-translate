@@ -4,6 +4,7 @@ import type { SupportedLanguage, TranslationProvider } from './provider'
 import { publishTranslationLruInvalidation } from './redis-invalidate-sub'
 import { sha256 } from './service'
 import { detectSourceLanguage, isNonTranslatable } from './detect'
+import { normalizeForProvider, normalizeForTranslationKey } from './normalize'
 
 const REDIS_TTL_SEC = 60 * 60 * 24 * 30
 
@@ -17,7 +18,11 @@ function hashV2(input: { sourceText: string; sourceLanguageCode: SupportedLangua
 }
 
 function cacheKeyV2(hash: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage) {
-  return `translation:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
+  return `translation:global:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
+}
+
+function cacheKeyV2ForUser(userId: string, hash: string, sourceLanguageCode: SupportedLanguage, targetLanguageCode: SupportedLanguage) {
+  return `translation:${userId}:${sourceLanguageCode}:${targetLanguageCode}:${hash}`
 }
 
 function translationDbPersistEnabled(): boolean {
@@ -65,10 +70,13 @@ export async function translateBulkWithCache(params: {
   provider: TranslationProvider
   redis: Redis | null
   lru: LruLike | null
+  userId?: string | null
 }): Promise<BulkItemResult[]> {
-  const { texts, targetLanguage, provider, redis, lru } = params
+  const { texts, targetLanguage, provider, redis, lru, userId } = params
   const persistDb = translationDbPersistEnabled()
   const n = texts.length
+
+  const effectiveUserId = userId && userId.trim().length > 0 ? userId : null
 
   type Row = {
     index: number
@@ -81,14 +89,15 @@ export async function translateBulkWithCache(params: {
   }
 
   const rows: Row[] = texts.map((text, index) => {
-    const normalizedText = text.trim()
+    const providerText = normalizeForProvider(text)
+    const keyText = normalizeForTranslationKey(text)
     // Note: we initially compute hash/key after detection to include source+target.
     // For now, initialize placeholders; filled below.
-    const hash = sha256(normalizedText)
-    const key = `translation:${targetLanguage}:${hash}`
+    const hash = sha256(keyText)
+    const key = effectiveUserId ? `translation:${effectiveUserId}:${targetLanguage}:${hash}` : `translation:${targetLanguage}:${hash}`
     return {
       index,
-      text: normalizedText,
+      text: providerText,
       hash,
       key,
       translatedText: null as string | null,
@@ -107,11 +116,12 @@ export async function translateBulkWithCache(params: {
       continue
     }
     const detected = detectSourceLanguage(r.text)
-    const detectedSource = detected.sourceLanguageCode
+    const detectedSource = detected.reliable ? detected.sourceLanguageCode : null
     const src = detectedSource ?? defaultSourceLanguageForKey()
     srcByIndex.set(r.index, src)
-    r.hash = hashV2({ sourceText: r.text, sourceLanguageCode: src, targetLanguageCode: targetLanguage })
-    r.key = cacheKeyV2(r.hash, src, targetLanguage)
+    const keyText = normalizeForTranslationKey(r.text)
+    r.hash = hashV2({ sourceText: keyText, sourceLanguageCode: src, targetLanguageCode: targetLanguage })
+    r.key = effectiveUserId ? cacheKeyV2ForUser(effectiveUserId, r.hash, src, targetLanguage) : cacheKeyV2(r.hash, src, targetLanguage)
     if (detectedSource !== null && src === targetLanguage) {
       r.translatedText = r.text
       r.fromCache = true
@@ -152,7 +162,12 @@ export async function translateBulkWithCache(params: {
       where: {
         OR: needDb.map((r) => {
           const src = srcByIndex.get(r.index) ?? targetLanguage
-          return { hash: r.hash, sourceLanguageCode: src, targetLanguageCode: targetLanguage }
+          return {
+            userId: effectiveUserId ? effectiveUserId : 'global',
+            hash: r.hash,
+            sourceLanguageCode: src,
+            targetLanguageCode: targetLanguage,
+          }
         }),
       },
     })
@@ -209,7 +224,8 @@ export async function translateBulkWithCache(params: {
     if (persistDb) {
       await prisma.translation.createMany({
         data: needProvider.map((r) => ({
-          sourceText: r.text,
+          userId: effectiveUserId ? effectiveUserId : 'global',
+          sourceText: normalizeForTranslationKey(r.text),
           sourceLanguageCode: srcByIndex.get(r.index) ?? targetLanguage,
           targetLanguageCode: targetLanguage,
           translatedText: r.translatedText!,

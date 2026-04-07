@@ -2,10 +2,18 @@ import 'dotenv/config'
 import { createHttpServer } from '../app/http/server'
 import { registerRoutes } from '../app/http/routes'
 import { bootstrapApp } from '../app/bootstrap'
+import crypto from 'node:crypto'
 
 async function main() {
   const deps = await bootstrapApp()
   const app = createHttpServer()
+
+  app.use((req, res, next) => {
+    const id = req.header('x-request-id') || crypto.randomUUID()
+    res.setHeader('x-request-id', id)
+    ;(req as any).requestId = id
+    next()
+  })
 
   app.get('/health', async (_req, res) => {
     // Liveness: API process is up. (DB/Redis may be temporarily unavailable.)
@@ -29,7 +37,10 @@ async function main() {
   app.use((err: any, _req: any, res: any, _next: any) => {
     const status = typeof err?.status === 'number' ? err.status : 500
     const message = err?.message ? String(err.message) : 'Internal Server Error'
-    return res.status(status).json({ error: message })
+    const requestId = (_req as any).requestId
+    // eslint-disable-next-line no-console
+    console.error('request failed', { requestId, status, message, stack: err?.stack })
+    return res.status(status).json({ error: message, requestId })
   })
 
   const port = Number(process.env.PORT || 8080)
