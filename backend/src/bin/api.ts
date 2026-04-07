@@ -24,6 +24,14 @@ async function main() {
 
   registerRoutes(app, { redis: deps.redis, provider: deps.provider })
 
+  // Error handler must be registered after routes.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    const status = typeof err?.status === 'number' ? err.status : 500
+    const message = err?.message ? String(err.message) : 'Internal Server Error'
+    return res.status(status).json({ error: message })
+  })
+
   const port = Number(process.env.PORT || 8080)
   app.listen(port, () => {
     // eslint-disable-next-line no-console
